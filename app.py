@@ -50,7 +50,8 @@ def init_db():
     
     c.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
-            number TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            number TEXT,
             type TEXT
         )
     ''')
@@ -59,7 +60,7 @@ def init_db():
     c.execute('SELECT COUNT(*) FROM inventory')
     if c.fetchone()[0] == 0 and master_data.get('cards'):
         default_cards = [(card['number'], card['type']) for card in master_data['cards']]
-        c.executemany('INSERT OR IGNORE INTO inventory VALUES (?,?)', default_cards)
+        c.executemany('INSERT INTO inventory (number, type) VALUES (?,?)', default_cards)
     
     conn.commit()
     conn.close()
@@ -94,20 +95,17 @@ def update_master_data():
     save_master_data(data)
     master_data = data
     
-    # Update inventory with new cards
+    # Update inventory - clear and reload all cards
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # Get existing cards
-    c.execute('SELECT number FROM inventory')
-    existing_cards = {row[0] for row in c.fetchall()}
+    # Clear existing inventory
+    c.execute('DELETE FROM inventory')
     
-    # Add new cards from master data
-    new_cards = [(card['number'], card['type']) for card in data['cards'] 
-                 if card['number'] not in existing_cards]
-    
-    if new_cards:
-        c.executemany('INSERT INTO inventory VALUES (?,?)', new_cards)
+    # Insert all cards from master data (allows complete duplicates)
+    if data['cards']:
+        all_cards = [(card['number'], card['type']) for card in data['cards']]
+        c.executemany('INSERT INTO inventory (number, type) VALUES (?,?)', all_cards)
     
     conn.commit()
     conn.close()
@@ -174,7 +172,7 @@ def delete_sale(id):
 def get_inventory():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT * FROM inventory ORDER BY type, number')
+    c.execute('SELECT number, type FROM inventory ORDER BY type, number')
     rows = c.fetchall()
     conn.close()
     
@@ -402,6 +400,15 @@ MASTER_EDITOR_TEMPLATE = '''
             color: #666; 
             text-transform: uppercase;
         }
+        .info-message { 
+            background: #d1ecf1; 
+            color: #0c5460; 
+            padding: 8px 12px; 
+            border-radius: 4px; 
+            font-size: 0.85em; 
+            margin-bottom: 10px;
+            border: 1px solid #bee5eb;
+        }
         @media (max-width: 768px) { 
             .grid { grid-template-columns: 1fr; }
             .header h1 { font-size: 1.5em; }
@@ -442,6 +449,9 @@ MASTER_EDITOR_TEMPLATE = '''
                 <!-- Cards Section -->
                 <div class="section">
                     <h2><span class="section-icon">💳</span> Cards</h2>
+                    <div class="info-message">
+                        ℹ️ Duplicate card numbers are allowed (same number with same type)
+                    </div>
                     <div class="add-form">
                         <input type="text" id="newCardNumber" placeholder="Card Number">
                         <select id="newCardType">
@@ -619,13 +629,12 @@ MASTER_EDITOR_TEMPLATE = '''
                 return;
             }
             
-            if (masterData.cards.find(c => c.number === number)) {
-                showAlert('Card number already exists', 'error');
-                return;
-            }
-            
+            // No duplicate check - allow same number with same type
             masterData.cards.push({ number, type });
-            masterData.cards.sort((a, b) => a.number.localeCompare(b.number));
+            masterData.cards.sort((a, b) => {
+                if (a.number !== b.number) return a.number.localeCompare(b.number);
+                return a.type.localeCompare(b.type);
+            });
             
             document.getElementById('newCardNumber').value = '';
             document.getElementById('newCardType').value = '';
@@ -1235,10 +1244,17 @@ HTML_TEMPLATE = '''
         function checkCard() {
             const num = document.getElementById('cardNumber').value.trim();
             const badge = document.getElementById('cardValidationBadge');
-            const card = inventoryData.find(c => c.number === num);
             
-            if (card) {
-                document.getElementById('cardType').value = card.type;
+            // Check if card exists (supports duplicates)
+            const matchingCards = inventoryData.filter(c => c.number === num);
+            
+            if (matchingCards.length > 0) {
+                // If only one match, auto-select type
+                if (matchingCards.length === 1) {
+                    document.getElementById('cardType').value = matchingCards[0].type;
+                }
+                
+                // Check if used
                 const used = salesData.find(s => s.cardNumber === num);
                 
                 badge.style.display = 'inline-block';
