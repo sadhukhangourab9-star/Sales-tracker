@@ -210,6 +210,28 @@ def delete_sale(id):
     conn.close()
     return jsonify({'success': True})
 
+# NEW: Bulk delete endpoint
+@app.route('/api/sales/bulk-delete', methods=['POST'])
+def bulk_delete_sales():
+    data = request.json
+    ids = data.get('ids', [])
+    
+    if not ids:
+        return jsonify({'success': False, 'error': 'No IDs provided'}), 400
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # Use parameterized query with multiple placeholders
+    placeholders = ','.join(['?' for _ in ids])
+    c.execute(f'DELETE FROM sales WHERE id IN ({placeholders})', ids)
+    
+    deleted_count = c.rowcount
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'deleted_count': deleted_count})
+
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
     conn = sqlite3.connect(DB_PATH)
@@ -854,6 +876,7 @@ HTML_TEMPLATE = '''
         tr:hover { background: #f8f9fa; }
         tr.card-group-start { border-top: 2px solid #667eea; }
         tr.transaction-row { background: #fafbfc; }
+        tr.selected { background: #fff3cd !important; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .stat-card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 4px solid #667eea; }
         .stat-card h3 { color: #666; font-size: 0.9em; text-transform: uppercase; margin-bottom: 10px; }
@@ -886,10 +909,32 @@ HTML_TEMPLATE = '''
         .action-btns { display: flex; gap: 5px; }
         .action-btns .btn { padding: 6px 12px; font-size: 12px; margin: 0; }
         .validation-error { color: #dc3545; font-size: 0.85em; margin-top: 5px; display: none; }
+        
+        /* Bulk Delete Styles */
+        .bulk-delete-bar { 
+            background: #fff3cd; 
+            border: 2px solid #ffc107; 
+            border-radius: 8px; 
+            padding: 15px; 
+            margin-bottom: 20px; 
+            display: none; 
+            align-items: center; 
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .bulk-delete-bar.active { display: flex; }
+        .bulk-delete-info { font-weight: 600; color: #856404; }
+        .bulk-delete-actions { display: flex; gap: 10px; }
+        .checkbox-cell { width: 40px; text-align: center; }
+        .checkbox-cell input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+        .select-all-checkbox { width: 18px; height: 18px; cursor: pointer; }
+        .bulk-btn { padding: 8px 16px; font-size: 14px; }
         @media (max-width: 768px) { 
             .form-grid { grid-template-columns: 1fr; } 
             .header h1 { font-size: 1.8em; } 
             .master-data-btn { position: static; transform: none; margin-top: 15px; display: inline-block; }
+            .bulk-delete-bar { flex-direction: column; align-items: flex-start; }
         }
     </style>
 </head>
@@ -1016,15 +1061,29 @@ HTML_TEMPLATE = '''
                 </div>
                 <button class="btn btn-secondary" onclick="clearDateFilter()" style="padding: 8px 15px; font-size: 14px;">Clear</button>
             </div>
+            
             <div class="search-box">
                 <input type="text" id="searchRecords" placeholder="Search by card number, vendor, model..." onkeyup="searchRecords()">
             </div>
+            
+            <!-- Bulk Delete Bar -->
+            <div class="bulk-delete-bar" id="bulkDeleteBar">
+                <div class="bulk-delete-info">
+                    <span id="selectedCount">0</span> records selected
+                </div>
+                <div class="bulk-delete-actions">
+                    <button class="btn btn-secondary bulk-btn" onclick="clearSelection()">Clear Selection</button>
+                    <button class="btn btn-danger bulk-btn" onclick="deleteSelected()">🗑️ Delete Selected</button>
+                </div>
+            </div>
+            
             <button class="btn btn-success" onclick="loadSales()">🔄 Refresh Data</button>
             
             <div class="table-container">
                 <table id="recordsTable">
                     <thead>
                         <tr>
+                            <th class="checkbox-cell"><input type="checkbox" class="select-all-checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()"></th>
                             <th>Date & Time</th>
                             <th>Card Number</th>
                             <th>Card Type</th>
@@ -1200,6 +1259,7 @@ HTML_TEMPLATE = '''
         let comparisonData = [];
         let masterData = {};
         let currentCardTypes = [];
+        let selectedRecords = new Set();
 
         document.addEventListener('DOMContentLoaded', function() {
             setCurrentDateTime();
@@ -1303,6 +1363,12 @@ HTML_TEMPLATE = '''
                     // Populate card type dropdown with available types for this card
                     const options = result.types.map(type => `<option value="${type}">${type}</option>`).join('');
                     cardTypeSelect.innerHTML = '<option value="">Select</option>' + options;
+                    
+                    // AUTO-SELECT: If only one card type exists, select it automatically
+                    if (result.types.length === 1) {
+                        cardTypeSelect.value = result.types[0];
+                        validateForm();
+                    }
                     
                     // Check if used
                     const used = salesData.find(s => s.cardNumber === num);
@@ -1443,13 +1509,19 @@ HTML_TEMPLATE = '''
             setTimeout(() => alert.className = 'alert', 5000);
         }
 
+        // ==================== BULK DELETE FUNCTIONS ====================
+        
         function loadSales() {
             const tbody = document.getElementById('recordsBody');
             tbody.innerHTML = '';
             
             salesData.forEach(record => {
                 const row = tbody.insertRow();
+                const isSelected = selectedRecords.has(record.id);
+                if (isSelected) row.classList.add('selected');
+                
                 row.innerHTML = `
+                    <td class="checkbox-cell"><input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleRecordSelection('${record.id}', this)"></td>
                     <td>${new Date(record.dateTime).toLocaleString()}</td>
                     <td>${record.cardNumber}</td>
                     <td>${record.cardType}</td>
@@ -1466,7 +1538,91 @@ HTML_TEMPLATE = '''
                     </td>
                 `;
             });
+            
+            updateBulkDeleteBar();
         }
+
+        function toggleRecordSelection(id, checkbox) {
+            if (checkbox.checked) {
+                selectedRecords.add(id);
+                checkbox.closest('tr').classList.add('selected');
+            } else {
+                selectedRecords.delete(id);
+                checkbox.closest('tr').classList.remove('selected');
+            }
+            updateBulkDeleteBar();
+        }
+
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+            const checkboxes = document.querySelectorAll('#recordsBody input[type="checkbox"]');
+            const visibleRows = document.querySelectorAll('#recordsBody tr');
+            
+            checkboxes.forEach((checkbox, index) => {
+                checkbox.checked = selectAllCheckbox.checked;
+                const row = visibleRows[index];
+                const recordId = salesData[index].id;
+                
+                if (selectAllCheckbox.checked) {
+                    selectedRecords.add(recordId);
+                    row.classList.add('selected');
+                } else {
+                    selectedRecords.delete(recordId);
+                    row.classList.remove('selected');
+                }
+            });
+            
+            updateBulkDeleteBar();
+        }
+
+        function updateBulkDeleteBar() {
+            const bar = document.getElementById('bulkDeleteBar');
+            const countSpan = document.getElementById('selectedCount');
+            
+            if (selectedRecords.size > 0) {
+                bar.classList.add('active');
+                countSpan.textContent = selectedRecords.size;
+            } else {
+                bar.classList.remove('active');
+            }
+        }
+
+        function clearSelection() {
+            selectedRecords.clear();
+            document.getElementById('selectAllCheckbox').checked = false;
+            loadSales();
+        }
+
+        async function deleteSelected() {
+            if (selectedRecords.size === 0) return;
+            
+            if (!confirm(`Are you sure you want to delete ${selectedRecords.size} selected records? This action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/sales/bulk-delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ids: Array.from(selectedRecords) })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showAlert(`Successfully deleted ${result.deleted_count} records!`, 'success');
+                    selectedRecords.clear();
+                    document.getElementById('selectAllCheckbox').checked = false;
+                    await syncData();
+                } else {
+                    showAlert('Error: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Bulk delete failed: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== END BULK DELETE FUNCTIONS ====================
 
         async function editRecord(id) {
             const record = salesData.find(s => s.id === id);
@@ -1540,6 +1696,7 @@ HTML_TEMPLATE = '''
             try {
                 await fetch(`/api/sales/${id}`, {method: 'DELETE'});
                 salesData = salesData.filter(r => r.id !== id);
+                selectedRecords.delete(id);
                 loadSales();
                 showAlert('Deleted', 'success');
             } catch (error) {
@@ -1558,7 +1715,7 @@ HTML_TEMPLATE = '''
             endDate.setHours(23, 59, 59);
             
             Array.from(rows).forEach(row => {
-                const dateText = row.cells[0].textContent;
+                const dateText = row.cells[1].textContent;
                 const rowDate = new Date(dateText);
                 row.style.display = (rowDate >= startDate && rowDate <= endDate) ? '' : 'none';
             });
@@ -1571,7 +1728,7 @@ HTML_TEMPLATE = '''
             const rows = document.getElementById('recordsBody').getElementsByTagName('tr');
             
             Array.from(rows).forEach(row => {
-                const dateText = row.cells[0].textContent;
+                const dateText = row.cells[1].textContent;
                 const rowDate = new Date(dateText);
                 const rowMonth = rowDate.toISOString().slice(0, 7);
                 row.style.display = (rowMonth === month) ? '' : 'none';
