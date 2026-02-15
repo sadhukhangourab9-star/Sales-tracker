@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify, render_template_string
 import sqlite3
 import json
 from datetime import datetime
+import csv
+import io
 
 app = Flask(__name__)
 DB_PATH = 'sales.db'
@@ -121,6 +123,22 @@ def add_sale():
     conn.close()
     return jsonify({'success': True})
 
+@app.route('/api/sales/<id>', methods=['PUT'])
+def update_sale(id):
+    data = request.json
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''UPDATE sales SET 
+        dateTime=?, cardNumber=?, cardType=?, machine=?, 
+        vendor=?, model=?, amount=?, type=? WHERE id=?''', (
+        data['dateTime'], data['cardNumber'], data['cardType'],
+        data['machine'], data['vendor'], data['model'],
+        data['amount'], data['type'], id
+    ))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
 @app.route('/api/sales/<id>', methods=['DELETE'])
 def delete_sale(id):
     conn = sqlite3.connect(DB_PATH)
@@ -140,6 +158,46 @@ def get_inventory():
     
     inventory = [{'number': row[0], 'type': row[1]} for row in rows]
     return jsonify({'success': True, 'data': inventory})
+
+@app.route('/api/export/csv', methods=['POST'])
+def export_csv():
+    data = request.json
+    filters = data.get('filters', {})
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    query = 'SELECT * FROM sales WHERE 1=1'
+    params = []
+    
+    if filters.get('startDate'):
+        query += ' AND dateTime >= ?'
+        params.append(filters['startDate'] + 'T00:00:00')
+    if filters.get('endDate'):
+        query += ' AND dateTime <= ?'
+        params.append(filters['endDate'] + 'T23:59:59')
+    if filters.get('month'):
+        query += ' AND strftime("%Y-%m", dateTime) = ?'
+        params.append(filters['month'])
+    
+    query += ' ORDER BY dateTime DESC'
+    
+    c.execute(query, params)
+    rows = c.fetchall()
+    conn.close()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ID', 'Date Time', 'Card Number', 'Card Type', 'Machine', 'Vendor', 'Model', 'Amount', 'Type'])
+    
+    for row in rows:
+        writer.writerow(row)
+    
+    output.seek(0)
+    return output.getvalue(), 200, {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': f'attachment; filename=sales_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+    }
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -175,6 +233,7 @@ HTML_TEMPLATE = '''
         .btn-danger { background: #dc3545; color: white; }
         .btn-warning { background: #ffc107; color: #000; }
         .btn-secondary { background: #6c757d; color: white; }
+        .btn-info { background: #17a2b8; color: white; }
         .table-container { overflow-x: auto; margin-top: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         table { width: 100%; border-collapse: collapse; background: white; }
         th { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.5px; }
@@ -202,7 +261,18 @@ HTML_TEMPLATE = '''
         .date-filter { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
         .inventory-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 5px; font-weight: 600; background: #e3f2fd; color: #1976d2; }
         .clear-filters-btn { margin-bottom: 15px; padding: 8px 16px; font-size: 14px; }
-        @media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } .header h1 { font-size: 1.8em; } }
+        .export-section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px solid #dee2e6; }
+        .export-section h3 { margin-bottom: 15px; color: #333; }
+        .export-options { display: flex; gap: 15px; flex-wrap: wrap; align-items: end; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: white; margin: 5% auto; padding: 30px; border-radius: 12px; width: 90%; max-width: 800px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #dee2e6; }
+        .modal-header h2 { margin: 0; color: #333; }
+        .close { color: #aaa; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .close:hover { color: #000; }
+        .action-btns { display: flex; gap: 5px; }
+        .action-btns .btn { padding: 6px 12px; font-size: 12px; margin: 0; }
+        @media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } .header h1 { font-size: 1.8em; } .export-options { flex-direction: column; } }
     </style>
 </head>
 <body>
@@ -227,6 +297,7 @@ HTML_TEMPLATE = '''
             </div>
             
             <form id="saleForm">
+                <input type="hidden" id="editId" value="">
                 <div class="form-grid">
                     <div class="form-group">
                         <label>Date & Time</label>
@@ -310,7 +381,7 @@ HTML_TEMPLATE = '''
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-primary">Submit Sale</button>
+                <button type="submit" class="btn btn-primary" id="submitBtn">Submit Sale</button>
                 <button type="button" class="btn btn-warning" onclick="clearForm()">Clear Form</button>
                 <button type="button" class="btn btn-success" onclick="exportToExcel()">Export to Excel</button>
             </form>
@@ -318,11 +389,37 @@ HTML_TEMPLATE = '''
 
         <!-- Records Tab -->
         <div id="records" class="content">
+            <div class="export-section">
+                <h3>📥 Export/Backup Data</h3>
+                <div class="export-options">
+                    <div class="form-group" style="flex: 1; min-width: 150px;">
+                        <label>Start Date</label>
+                        <input type="date" id="exportStartDate">
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 150px;">
+                        <label>End Date</label>
+                        <input type="date" id="exportEndDate">
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 150px;">
+                        <label>Month Filter</label>
+                        <input type="month" id="exportMonth">
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-success" onclick="exportToCSV()">📄 Export CSV</button>
+                        <button class="btn btn-primary" onclick="exportToExcelFiltered()">📊 Export Excel</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="date-filter">
                 <label><strong>Filter by Date:</strong></label>
                 <input type="date" id="startDate" onchange="filterRecords()">
                 <span>to</span>
                 <input type="date" id="endDate" onchange="filterRecords()">
+                <div class="form-group" style="margin: 0;">
+                    <label style="font-size: 0.8em; margin-bottom: 2px;">Month</label>
+                    <input type="month" id="recordMonthFilter" onchange="filterRecordsByMonth()" style="padding: 6px;">
+                </div>
                 <button class="btn btn-secondary" onclick="clearDateFilter()" style="padding: 8px 15px; font-size: 14px;">Clear</button>
             </div>
             <div class="search-box">
@@ -357,6 +454,14 @@ HTML_TEMPLATE = '''
             <button class="btn btn-secondary clear-filters-btn" onclick="clearInventoryFilters()">Clear All Filters</button>
             
             <div class="filter-box">
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: end; margin-bottom: 15px;">
+                    <div class="form-group" style="flex: 1; min-width: 200px; margin: 0;">
+                        <label>Filter by Month</label>
+                        <input type="month" id="inventoryMonthFilter" onchange="applyInventoryFilters()" style="padding: 8px;">
+                    </div>
+                    <button class="btn btn-secondary" onclick="clearInventoryMonthFilter()" style="margin-bottom: 0;">Clear Month</button>
+                </div>
+                
                 <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600;">
                     <input type="checkbox" id="showRemainingForModel" onchange="applyInventoryFilters()" style="width: 18px; height: 18px;">
                     <span>🎯 Show Remaining Cards Only (Not Used for Selected Model)</span>
@@ -424,6 +529,102 @@ HTML_TEMPLATE = '''
         </div>
     </div>
 
+    <!-- Edit Modal -->
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>✏️ Edit Sale Record</h2>
+                <span class="close" onclick="closeEditModal()">&times;</span>
+            </div>
+            <form id="editForm">
+                <input type="hidden" id="editModalId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Date & Time</label>
+                        <input type="datetime-local" id="editDateTime" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Card Number *</label>
+                        <input type="text" id="editCardNumber" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Card Type *</label>
+                        <select id="editCardType" required>
+                            <option value="">Select</option>
+                            <option value="SBI">SBI</option>
+                            <option value="ICICI">ICICI</option>
+                            <option value="HDFC">HDFC</option>
+                            <option value="KOTAK">KOTAK</option>
+                            <option value="AXIS">AXIS</option>
+                            <option value="IDFC">IDFC</option>
+                            <option value="INDUSIND">INDUSIND</option>
+                            <option value="RBL">RBL</option>
+                            <option value="YES">YES</option>
+                            <option value="BOB">BOB</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Machine *</label>
+                        <select id="editMachine" required>
+                            <option value="">Select</option>
+                            <option value="PINELAB">PINELAB</option>
+                            <option value="BENOW">BENOW</option>
+                            <option value="PAYTM">PAYTM</option>
+                            <option value="RAZORPAY">RAZORPAY</option>
+                            <option value="INNOVITI">INNOVITI</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Vendor *</label>
+                        <select id="editVendor" required>
+                            <option value="">Select</option>
+                            <option value="LIMPTON">LIMPTON</option>
+                            <option value="R G CELLULLARS">R G CELLULLARS</option>
+                            <option value="VELOCITY">VELOCITY</option>
+                            <option value="LETS CONNECT">LETS CONNECT</option>
+                            <option value="THE PRIME">THE PRIME</option>
+                            <option value="LOGICA">LOGICA</option>
+                            <option value="BHAJANLAL">BHAJANLAL</option>
+                            <option value="NATIONAL RADIO PRODUCT">NATIONAL RADIO PRODUCT</option>
+                            <option value="DISHA">DISHA</option>
+                            <option value="D P ELECTRONICS">D P ELECTRONICS</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Model *</label>
+                        <select id="editModel" required>
+                            <option value="">Select</option>
+                            <option value="NOTHING">NOTHING</option>
+                            <option value="VIVO">VIVO</option>
+                            <option value="CMF">CMF</option>
+                            <option value="MOTOROLA">MOTOROLA</option>
+                            <option value="OPPO">OPPO</option>
+                            <option value="REDMI">REDMI</option>
+                            <option value="APPLE">APPLE</option>
+                            <option value="SAMSUNG">SAMSUNG</option>
+                            <option value="ONEPLUS">ONEPLUS</option>
+                            <option value="REALME">REALME</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Amount (₹) *</label>
+                        <input type="number" id="editAmount" required min="0" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Type *</label>
+                        <select id="editType" required>
+                            <option value="">Select</option>
+                            <option value="INSTANT">INSTANT</option>
+                            <option value="EMI">EMI</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Update Record</button>
+                <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+            </form>
+        </div>
+    </div>
+
     <script>
         let salesData = [];
         let inventoryData = [];
@@ -436,6 +637,10 @@ HTML_TEMPLATE = '''
             
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('endDate').value = today;
+            
+            // Set current month as default for month filters
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            document.getElementById('exportMonth').value = currentMonth;
         });
 
         function setCurrentDateTime() {
@@ -504,8 +709,9 @@ HTML_TEMPLATE = '''
         document.getElementById('saleForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
+            const editId = document.getElementById('editId').value;
             const record = {
-                id: Date.now().toString(),
+                id: editId || Date.now().toString(),
                 dateTime: document.getElementById('dateTime').value,
                 cardNumber: document.getElementById('cardNumber').value.trim(),
                 cardType: document.getElementById('cardType').value,
@@ -517,21 +723,36 @@ HTML_TEMPLATE = '''
             };
             
             try {
-                await fetch('/api/sales', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(record)
-                });
-                salesData.unshift(record);
-                showAlert('Sale saved!', 'success');
+                if (editId) {
+                    // Update existing
+                    await fetch(`/api/sales/${editId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(record)
+                    });
+                    const idx = salesData.findIndex(s => s.id === editId);
+                    if (idx !== -1) salesData[idx] = record;
+                    showAlert('Record updated!', 'success');
+                } else {
+                    // Add new
+                    await fetch('/api/sales', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(record)
+                    });
+                    salesData.unshift(record);
+                    showAlert('Sale saved!', 'success');
+                }
                 clearForm();
             } catch (error) {
-                showAlert('Save failed', 'error');
+                showAlert('Save failed: ' + error.message, 'error');
             }
         });
 
         function clearForm() {
             document.getElementById('saleForm').reset();
+            document.getElementById('editId').value = '';
+            document.getElementById('submitBtn').textContent = 'Submit Sale';
             setCurrentDateTime();
             document.getElementById('cardValidationBadge').style.display = 'none';
         }
@@ -558,10 +779,71 @@ HTML_TEMPLATE = '''
                     <td>${record.model}</td>
                     <td>₹${record.amount.toLocaleString()}</td>
                     <td>${record.type}</td>
-                    <td><button class="btn btn-danger" onclick="deleteRecord('${record.id}')">Delete</button></td>
+                    <td>
+                        <div class="action-btns">
+                            <button class="btn btn-info" onclick="editRecord('${record.id}')">Edit</button>
+                            <button class="btn btn-danger" onclick="deleteRecord('${record.id}')">Delete</button>
+                        </div>
+                    </td>
                 `;
             });
         }
+
+        function editRecord(id) {
+            const record = salesData.find(s => s.id === id);
+            if (!record) return;
+            
+            document.getElementById('editModalId').value = record.id;
+            document.getElementById('editDateTime').value = record.dateTime.slice(0, 16);
+            document.getElementById('editCardNumber').value = record.cardNumber;
+            document.getElementById('editCardType').value = record.cardType;
+            document.getElementById('editMachine').value = record.machine;
+            document.getElementById('editVendor').value = record.vendor;
+            document.getElementById('editModel').value = record.model;
+            document.getElementById('editAmount').value = record.amount;
+            document.getElementById('editType').value = record.type;
+            
+            document.getElementById('editModal').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').style.display = 'none';
+        }
+
+        document.getElementById('editForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const id = document.getElementById('editModalId').value;
+            const record = {
+                dateTime: document.getElementById('editDateTime').value,
+                cardNumber: document.getElementById('editCardNumber').value.trim(),
+                cardType: document.getElementById('editCardType').value,
+                machine: document.getElementById('editMachine').value,
+                vendor: document.getElementById('editVendor').value,
+                model: document.getElementById('editModel').value,
+                amount: parseFloat(document.getElementById('editAmount').value),
+                type: document.getElementById('editType').value
+            };
+            
+            try {
+                await fetch(`/api/sales/${id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(record)
+                });
+                
+                const idx = salesData.findIndex(s => s.id === id);
+                if (idx !== -1) {
+                    salesData[idx] = { ...record, id };
+                }
+                
+                closeEditModal();
+                loadSales();
+                showAlert('Record updated successfully!', 'success');
+            } catch (error) {
+                showAlert('Update failed: ' + error.message, 'error');
+            }
+        });
 
         async function deleteRecord(id) {
             if (!confirm('Delete this record?')) return;
@@ -592,9 +874,24 @@ HTML_TEMPLATE = '''
             });
         }
 
+        function filterRecordsByMonth() {
+            const month = document.getElementById('recordMonthFilter').value;
+            if (!month) return;
+            
+            const rows = document.getElementById('recordsBody').getElementsByTagName('tr');
+            
+            Array.from(rows).forEach(row => {
+                const dateText = row.cells[0].textContent;
+                const rowDate = new Date(dateText);
+                const rowMonth = rowDate.toISOString().slice(0, 7);
+                row.style.display = (rowMonth === month) ? '' : 'none';
+            });
+        }
+
         function clearDateFilter() {
             document.getElementById('startDate').value = '';
             document.getElementById('endDate').value = '';
+            document.getElementById('recordMonthFilter').value = '';
             loadSales();
         }
 
@@ -604,6 +901,61 @@ HTML_TEMPLATE = '''
             Array.from(rows).forEach(row => {
                 row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none';
             });
+        }
+
+        async function exportToCSV() {
+            const filters = {
+                startDate: document.getElementById('exportStartDate').value,
+                endDate: document.getElementById('exportEndDate').value,
+                month: document.getElementById('exportMonth').value
+            };
+            
+            try {
+                const response = await fetch('/api/export/csv', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filters})
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `sales_export_${new Date().toISOString().slice(0,10)}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    showAlert('CSV exported successfully!', 'success');
+                }
+            } catch (error) {
+                showAlert('Export failed: ' + error.message, 'error');
+            }
+        }
+
+        function exportToExcelFiltered() {
+            const startDate = document.getElementById('exportStartDate').value;
+            const endDate = document.getElementById('exportEndDate').value;
+            const month = document.getElementById('exportMonth').value;
+            
+            let filteredData = [...salesData];
+            
+            if (startDate) {
+                filteredData = filteredData.filter(s => s.dateTime >= startDate + 'T00:00:00');
+            }
+            if (endDate) {
+                filteredData = filteredData.filter(s => s.dateTime <= endDate + 'T23:59:59');
+            }
+            if (month) {
+                filteredData = filteredData.filter(s => s.dateTime.slice(0, 7) === month);
+            }
+            
+            const ws = XLSX.utils.json_to_sheet(filteredData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Sales');
+            XLSX.writeFile(wb, `sales_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+            showAlert('Excel exported successfully!', 'success');
         }
 
         function loadInventory() {
@@ -682,9 +1034,18 @@ HTML_TEMPLATE = '''
                 model: document.getElementById('filterModel').value
             };
             
+            const monthFilter = document.getElementById('inventoryMonthFilter').value;
             const showRemaining = document.getElementById('showRemainingForModel').checked;
             const remainingStats = document.getElementById('remainingStats');
             let filtered = [...comparisonData];
+            
+            // Apply month filter
+            if (monthFilter) {
+                filtered = filtered.filter(item => {
+                    if (item.dateTime === '-') return false;
+                    return item.dateTime.slice(0, 7) === monthFilter;
+                });
+            }
             
             if (showRemaining && filters.model) {
                 let usedForModel = comparisonData.filter(c => c.model === filters.model && c.status === 'Used');
@@ -744,6 +1105,12 @@ HTML_TEMPLATE = '''
             });
             document.getElementById('showRemainingForModel').checked = false;
             document.getElementById('remainingStats').style.display = 'none';
+            document.getElementById('inventoryMonthFilter').value = '';
+            applyInventoryFilters();
+        }
+
+        function clearInventoryMonthFilter() {
+            document.getElementById('inventoryMonthFilter').value = '';
             applyInventoryFilters();
         }
 
@@ -806,6 +1173,14 @@ HTML_TEMPLATE = '''
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Sales');
             XLSX.writeFile(wb, `sales_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('editModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
         }
     </script>
 </body>
