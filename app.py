@@ -10,6 +10,9 @@ app = Flask(__name__)
 DB_PATH = 'sales.db'
 MASTER_DATA_PATH = 'master_data.json'
 
+# Card types list
+CARD_TYPES = ['SBI', 'ICICI', 'HDFC', 'KOTAK', 'AXIS', 'IDFC', 'INDUSIND', 'RBL', 'YES', 'BOB', 'FEDERAL']
+
 # Load Master Data
 def load_master_data():
     if os.path.exists(MASTER_DATA_PATH):
@@ -76,7 +79,7 @@ def index():
 
 @app.route('/master-data-editor')
 def master_data_editor():
-    return render_template_string(MASTER_EDITOR_TEMPLATE)
+    return render_template_string(MASTER_EDITOR_TEMPLATE, card_types=CARD_TYPES)
 
 @app.route('/api/master-data', methods=['GET'])
 def get_master_data():
@@ -112,6 +115,21 @@ def update_master_data():
     
     return jsonify({'success': True, 'message': 'Master data updated successfully'})
 
+@app.route('/api/validate-card/<number>', methods=['GET'])
+def validate_card(number):
+    # Get all cards with this number from inventory
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT DISTINCT type FROM inventory WHERE number = ?', (number,))
+    types = [row[0] for row in c.fetchall()]
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'exists': len(types) > 0,
+        'types': types
+    })
+
 @app.route('/api/sales', methods=['GET'])
 def get_sales():
     conn = sqlite3.connect(DB_PATH)
@@ -132,6 +150,18 @@ def get_sales():
 @app.route('/api/sales', methods=['POST'])
 def add_sale():
     data = request.json
+    
+    # Validate card exists in master data
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM inventory WHERE number = ? AND type = ?', 
+              (data['cardNumber'], data['cardType']))
+    count = c.fetchone()[0]
+    conn.close()
+    
+    if count == 0:
+        return jsonify({'success': False, 'error': 'Card not found in master data'}), 400
+    
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('INSERT INTO sales VALUES (?,?,?,?,?,?,?,?,?)', (
@@ -146,6 +176,18 @@ def add_sale():
 @app.route('/api/sales/<id>', methods=['PUT'])
 def update_sale(id):
     data = request.json
+    
+    # Validate card exists in master data
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM inventory WHERE number = ? AND type = ?', 
+              (data['cardNumber'], data['cardType']))
+    count = c.fetchone()[0]
+    conn.close()
+    
+    if count == 0:
+        return jsonify({'success': False, 'error': 'Card not found in master data'}), 400
+    
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''UPDATE sales SET 
@@ -456,6 +498,9 @@ MASTER_EDITOR_TEMPLATE = '''
                         <input type="text" id="newCardNumber" placeholder="Card Number">
                         <select id="newCardType">
                             <option value="">Select Type</option>
+                            {% for type in card_types %}
+                            <option value="{{ type }}">{{ type }}</option>
+                            {% endfor %}
                         </select>
                         <button class="btn btn-success" onclick="addCard()">Add</button>
                     </div>
@@ -505,23 +550,9 @@ MASTER_EDITOR_TEMPLATE = '''
             models: []
         };
 
-        // Card types (fixed list)
-        const cardTypes = ['SBI', 'ICICI', 'HDFC', 'KOTAK', 'AXIS', 'IDFC', 'INDUSIND', 'RBL', 'YES', 'BOB'];
-
         document.addEventListener('DOMContentLoaded', function() {
             loadMasterData();
-            populateCardTypes();
         });
-
-        function populateCardTypes() {
-            const select = document.getElementById('newCardType');
-            cardTypes.forEach(type => {
-                const opt = document.createElement('option');
-                opt.value = type;
-                opt.textContent = type;
-                select.appendChild(opt);
-            });
-        }
 
         async function loadMasterData() {
             try {
@@ -806,6 +837,7 @@ HTML_TEMPLATE = '''
         .form-group input:focus, .form-group select:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1); }
         .card-status-badge { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); padding: 4px 8px; border-radius: 4px; font-size: 0.75em; font-weight: bold; display: none; }
         .card-valid { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .card-invalid { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
         .card-used { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
         .btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.3s; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 10px; margin-bottom: 10px; }
         .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
@@ -814,6 +846,7 @@ HTML_TEMPLATE = '''
         .btn-warning { background: #ffc107; color: #000; }
         .btn-secondary { background: #6c757d; color: white; }
         .btn-info { background: #17a2b8; color: white; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
         .table-container { overflow-x: auto; margin-top: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         table { width: 100%; border-collapse: collapse; background: white; }
         th { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.85em; letter-spacing: 0.5px; }
@@ -852,6 +885,7 @@ HTML_TEMPLATE = '''
         .close:hover { color: #000; }
         .action-btns { display: flex; gap: 5px; }
         .action-btns .btn { padding: 6px 12px; font-size: 12px; margin: 0; }
+        .validation-error { color: #dc3545; font-size: 0.85em; margin-top: 5px; display: none; }
         @media (max-width: 768px) { 
             .form-grid { grid-template-columns: 1fr; } 
             .header h1 { font-size: 1.8em; } 
@@ -892,10 +926,11 @@ HTML_TEMPLATE = '''
                         <label>Card Number *</label>
                         <input type="text" id="cardNumber" placeholder="Enter card number" required oninput="checkCard()">
                         <span id="cardValidationBadge" class="card-status-badge"></span>
+                        <div id="cardError" class="validation-error">Card not found in master data</div>
                     </div>
                     <div class="form-group">
                         <label>Card Type *</label>
-                        <select id="cardType" required>
+                        <select id="cardType" required onchange="validateCardType()">
                             <option value="">Select</option>
                         </select>
                     </div>
@@ -940,7 +975,7 @@ HTML_TEMPLATE = '''
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-primary" id="submitBtn">Submit Sale</button>
+                <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Submit Sale</button>
                 <button type="button" class="btn btn-warning" onclick="clearForm()">Clear Form</button>
                 <button type="button" class="btn btn-success" onclick="exportToExcel()">Export to Excel</button>
             </form>
@@ -1104,7 +1139,8 @@ HTML_TEMPLATE = '''
                     </div>
                     <div class="form-group">
                         <label>Card Number *</label>
-                        <input type="text" id="editCardNumber" required>
+                        <input type="text" id="editCardNumber" required oninput="checkEditCard()">
+                        <span id="editCardValidationBadge" class="card-status-badge"></span>
                     </div>
                     <div class="form-group">
                         <label>Card Type *</label>
@@ -1152,7 +1188,7 @@ HTML_TEMPLATE = '''
                         </select>
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary">Update Record</button>
+                <button type="submit" class="btn btn-primary" id="editSubmitBtn">Update Record</button>
                 <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
             </form>
         </div>
@@ -1163,6 +1199,7 @@ HTML_TEMPLATE = '''
         let inventoryData = [];
         let comparisonData = [];
         let masterData = {};
+        let currentCardTypes = [];
 
         document.addEventListener('DOMContentLoaded', function() {
             setCurrentDateTime();
@@ -1192,6 +1229,7 @@ HTML_TEMPLATE = '''
             const cardTypeSelect = document.getElementById('cardType');
             const editCardTypeSelect = document.getElementById('editCardType');
             
+            // Get unique card types from master data
             const cardTypes = [...new Set(masterData.cards.map(c => c.type))].sort();
             
             const options = cardTypes.map(type => `<option value="${type}">${type}</option>`).join('');
@@ -1241,32 +1279,101 @@ HTML_TEMPLATE = '''
             if (tabName === 'reports') loadReports();
         }
 
-        function checkCard() {
+        async function checkCard() {
             const num = document.getElementById('cardNumber').value.trim();
             const badge = document.getElementById('cardValidationBadge');
+            const cardError = document.getElementById('cardError');
+            const cardTypeSelect = document.getElementById('cardType');
+            const submitBtn = document.getElementById('submitBtn');
             
-            // Check if card exists (supports duplicates)
-            const matchingCards = inventoryData.filter(c => c.number === num);
+            if (!num) {
+                badge.style.display = 'none';
+                cardError.style.display = 'none';
+                submitBtn.disabled = true;
+                return;
+            }
             
-            if (matchingCards.length > 0) {
-                // If only one match, auto-select type
-                if (matchingCards.length === 1) {
-                    document.getElementById('cardType').value = matchingCards[0].type;
-                }
+            try {
+                const response = await fetch(`/api/validate-card/${encodeURIComponent(num)}`);
+                const result = await response.json();
                 
-                // Check if used
-                const used = salesData.find(s => s.cardNumber === num);
-                
-                badge.style.display = 'inline-block';
-                if (used) {
-                    badge.className = 'card-status-badge card-used';
-                    badge.textContent = 'USED';
+                if (result.exists) {
+                    currentCardTypes = result.types;
+                    
+                    // Populate card type dropdown with available types for this card
+                    const options = result.types.map(type => `<option value="${type}">${type}</option>`).join('');
+                    cardTypeSelect.innerHTML = '<option value="">Select</option>' + options;
+                    
+                    // Check if used
+                    const used = salesData.find(s => s.cardNumber === num);
+                    
+                    badge.style.display = 'inline-block';
+                    badge.className = 'card-status-badge card-valid';
+                    badge.textContent = used ? 'USED' : 'VALID';
+                    
+                    cardError.style.display = 'none';
+                    
+                    // Enable submit only if card type is selected
+                    validateForm();
                 } else {
+                    currentCardTypes = [];
+                    cardTypeSelect.innerHTML = '<option value="">Select</option>';
+                    
+                    badge.style.display = 'inline-block';
+                    badge.className = 'card-status-badge card-invalid';
+                    badge.textContent = 'INVALID';
+                    
+                    cardError.style.display = 'block';
+                    submitBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error('Card validation error:', error);
+            }
+        }
+
+        function validateCardType() {
+            validateForm();
+        }
+
+        function validateForm() {
+            const cardNumber = document.getElementById('cardNumber').value.trim();
+            const cardType = document.getElementById('cardType').value;
+            const submitBtn = document.getElementById('submitBtn');
+            
+            // Check if card number exists in master data and type matches
+            const isValid = cardNumber && cardType && currentCardTypes.includes(cardType);
+            submitBtn.disabled = !isValid;
+        }
+
+        async function checkEditCard() {
+            const num = document.getElementById('editCardNumber').value.trim();
+            const badge = document.getElementById('editCardValidationBadge');
+            const cardTypeSelect = document.getElementById('editCardType');
+            
+            if (!num) {
+                badge.style.display = 'none';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/validate-card/${encodeURIComponent(num)}`);
+                const result = await response.json();
+                
+                if (result.exists) {
+                    const options = result.types.map(type => `<option value="${type}">${type}</option>`).join('');
+                    cardTypeSelect.innerHTML = '<option value="">Select</option>' + options;
+                    
+                    badge.style.display = 'inline-block';
                     badge.className = 'card-status-badge card-valid';
                     badge.textContent = 'VALID';
+                } else {
+                    cardTypeSelect.innerHTML = '<option value="">Select</option>';
+                    badge.style.display = 'inline-block';
+                    badge.className = 'card-status-badge card-invalid';
+                    badge.textContent = 'NOT FOUND';
                 }
-            } else {
-                badge.style.display = 'none';
+            } catch (error) {
+                console.error('Card validation error:', error);
             }
         }
 
@@ -1287,21 +1394,27 @@ HTML_TEMPLATE = '''
             };
             
             try {
+                const url = editId ? `/api/sales/${editId}` : '/api/sales';
+                const method = editId ? 'PUT' : 'POST';
+                
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(record)
+                });
+                
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showAlert(result.error || 'Failed to save', 'error');
+                    return;
+                }
+                
                 if (editId) {
-                    await fetch(`/api/sales/${editId}`, {
-                        method: 'PUT',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(record)
-                    });
                     const idx = salesData.findIndex(s => s.id === editId);
                     if (idx !== -1) salesData[idx] = record;
                     showAlert('Record updated!', 'success');
                 } else {
-                    await fetch('/api/sales', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(record)
-                    });
                     salesData.unshift(record);
                     showAlert('Sale saved!', 'success');
                 }
@@ -1315,9 +1428,12 @@ HTML_TEMPLATE = '''
             document.getElementById('saleForm').reset();
             document.getElementById('editId').value = '';
             document.getElementById('submitBtn').textContent = 'Submit Sale';
-            setCurrentDateTime();
             document.getElementById('cardValidationBadge').style.display = 'none';
+            document.getElementById('cardError').style.display = 'none';
+            document.getElementById('submitBtn').disabled = true;
+            currentCardTypes = [];
             populateCardTypeDropdown();
+            setCurrentDateTime();
         }
 
         function showAlert(message, type) {
@@ -1352,13 +1468,17 @@ HTML_TEMPLATE = '''
             });
         }
 
-        function editRecord(id) {
+        async function editRecord(id) {
             const record = salesData.find(s => s.id === id);
             if (!record) return;
             
             document.getElementById('editModalId').value = record.id;
             document.getElementById('editDateTime').value = record.dateTime.slice(0, 16);
             document.getElementById('editCardNumber').value = record.cardNumber;
+            
+            // Validate and populate card types
+            await checkEditCard();
+            
             document.getElementById('editCardType').value = record.cardType;
             document.getElementById('editMachine').value = record.machine;
             document.getElementById('editVendor').value = record.vendor;
@@ -1389,11 +1509,18 @@ HTML_TEMPLATE = '''
             };
             
             try {
-                await fetch(`/api/sales/${id}`, {
+                const response = await fetch(`/api/sales/${id}`, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(record)
                 });
+                
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showAlert(result.error || 'Failed to update', 'error');
+                    return;
+                }
                 
                 const idx = salesData.findIndex(s => s.id === id);
                 if (idx !== -1) {
