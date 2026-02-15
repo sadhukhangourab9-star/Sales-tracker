@@ -4,9 +4,30 @@ import json
 from datetime import datetime
 import csv
 import io
+import os
 
 app = Flask(__name__)
 DB_PATH = 'sales.db'
+MASTER_DATA_PATH = 'master_data.json'
+
+# Load Master Data
+def load_master_data():
+    if os.path.exists(MASTER_DATA_PATH):
+        with open(MASTER_DATA_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {
+        "cards": [],
+        "machines": [],
+        "vendors": [],
+        "models": []
+    }
+
+# Save Master Data
+def save_master_data(data):
+    with open(MASTER_DATA_PATH, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+
+master_data = load_master_data()
 
 # Initialize Database
 def init_db():
@@ -34,53 +55,10 @@ def init_db():
         )
     ''')
     
+    # Load cards from master data only if inventory is empty
     c.execute('SELECT COUNT(*) FROM inventory')
-    if c.fetchone()[0] == 0:
-        default_cards = [
-            ("7340", "SBI"), ("7357", "SBI"), ("7373", "SBI"), ("7365", "SBI"),
-            ("2448", "SBI"), ("9207", "SBI"), ("0359", "SBI"), ("8431", "SBI"),
-            ("0618", "SBI"), ("1285", "SBI"), ("1277", "SBI"), ("1293", "SBI"),
-            ("7524", "SBI"), ("0358", "SBI"), ("0341", "SBI"), ("7261", "SBI"),
-            ("7056", "SBI"), ("1914", "SBI"), ("1906", "SBI"), ("9920", "SBI"),
-            ("2748", "SBI"), ("6184", "SBI"), ("5994", "SBI"), ("5986", "SBI"),
-            ("4544", "SBI"), ("5152", "SBI"), ("5160", "SBI"), ("5178", "SBI"),
-            ("7005", "ICICI"), ("7104", "ICICI"), ("4001", "ICICI"), ("4100", "ICICI"),
-            ("0000", "ICICI"), ("0109", "ICICI"), ("1006", "ICICI"), ("1105", "ICICI"),
-            ("3007", "ICICI"), ("3106", "ICICI"), ("9002", "ICICI"), ("9101", "ICICI"),
-            ("70103", "ICICI"), ("70004", "ICICI"), ("60007", "ICICI"), ("7003", "ICICI"),
-            ("7102", "ICICI"), ("0003", "ICICI"), ("8001", "ICICI"), ("9003", "ICICI"),
-            ("9009", "ICICI"), ("9108", "ICICI"), ("6004", "ICICI"), ("6103", "ICICI"),
-            ("7004", "ICICI"), ("0006", "ICICI"), ("8003", "ICICI"), ("8201", "ICICI"),
-            ("9000", "ICICI"), ("9109", "ICICI"), ("9208", "ICICI"), ("4007", "ICICI"),
-            ("4106", "ICICI"), ("8209", "ICICI"), ("8100", "ICICI"), ("4205", "ICICI"),
-            ("6001", "ICICI"), ("7009", "ICICI"), ("7900", "HDFC"), ("9662", "HDFC"),
-            ("0033", "HDFC"), ("5025", "HDFC"), ("7719", "HDFC"), ("3599", "HDFC"),
-            ("7342", "HDFC"), ("6368", "HDFC"), ("1533", "HDFC"), ("4405", "HDFC"),
-            ("0989", "HDFC"), ("5521", "HDFC"), ("8122", "HDFC"), ("6837", "HDFC"),
-            ("9255", "KOTAK"), ("9248", "KOTAK"), ("2057", "KOTAK"), ("2874", "KOTAK"),
-            ("3375", "KOTAK"), ("4668", "AXIS"), ("8230", "AXIS"), ("5058", "AXIS"),
-            ("5790", "AXIS"), ("9873", "AXIS"), ("0861", "AXIS"), ("1227", "AXIS"),
-            ("5808", "AXIS"), ("6988", "AXIS"), ("0853", "AXIS"), ("3158", "AXIS"),
-            ("4570", "AXIS"), ("8821", "AXIS"), ("4477", "AXIS"), ("3258", "IDFC"),
-            ("6853", "IDFC"), ("9112", "IDFC"), ("7775", "IDFC"), ("0027", "IDFC"),
-            ("6486", "IDFC"), ("4245", "IDFC"), ("3875", "IDFC"), ("4557", "IDFC"),
-            ("1047", "IDFC"), ("2134", "IDFC"), ("7907", "IDFC"), ("5139", "INDUSIND"),
-            ("8156", "INDUSIND"), ("2941", "INDUSIND"), ("0081", "INDUSIND"),
-            ("1413", "INDUSIND"), ("2897", "INDUSIND"), ("6669", "INDUSIND"),
-            ("6289", "INDUSIND"), ("5205", "INDUSIND"), ("8600", "INDUSIND"),
-            ("4247", "INDUSIND"), ("6655", "INDUSIND"), ("9031", "INDUSIND"),
-            ("4831", "INDUSIND"), ("3197", "INDUSIND"), ("7145", "INDUSIND"),
-            ("1324", "INDUSIND"), ("1314", "INDUSIND"), ("9575", "INDUSIND"),
-            ("7172", "INDUSIND"), ("8834", "INDUSIND"), ("9436", "RBL"),
-            ("1015", "RBL"), ("6809", "RBL"), ("0026", "RBL"), ("3160", "RBL"),
-            ("3885", "RBL"), ("9820", "RBL"), ("1083", "RBL"), ("1924", "RBL"),
-            ("9794", "RBL"), ("4907", "RBL"), ("3402", "RBL"), ("3477", "RBL"),
-            ("0276", "RBL"), ("0344", "RBL"), ("9991", "RBL"), ("3860", "RBL"),
-            ("8458", "YES"), ("7676", "YES"), ("2709", "YES"), ("2337", "YES"),
-            ("8508", "BOB"), ("6509", "BOB"), ("4805", "BOB"), ("0870", "BOB"),
-            ("6118", "BOB"), ("5397", "BOB"), ("2023", "BOB"), ("7613", "BOB"),
-            ("6395", "BOB"), ("1401", "BOB"), ("0041", "BOB")
-        ]
+    if c.fetchone()[0] == 0 and master_data.get('cards'):
+        default_cards = [(card['number'], card['type']) for card in master_data['cards']]
         c.executemany('INSERT OR IGNORE INTO inventory VALUES (?,?)', default_cards)
     
     conn.commit()
@@ -90,7 +68,51 @@ init_db()
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, 
+                                machines=master_data.get('machines', []),
+                                vendors=master_data.get('vendors', []),
+                                models=master_data.get('models', []))
+
+@app.route('/master-data-editor')
+def master_data_editor():
+    return render_template_string(MASTER_EDITOR_TEMPLATE)
+
+@app.route('/api/master-data', methods=['GET'])
+def get_master_data():
+    return jsonify({'success': True, 'data': master_data})
+
+@app.route('/api/master-data', methods=['POST'])
+def update_master_data():
+    global master_data
+    data = request.json
+    
+    # Validate data structure
+    if not all(key in data for key in ['cards', 'machines', 'vendors', 'models']):
+        return jsonify({'success': False, 'error': 'Invalid data structure'}), 400
+    
+    # Save to file
+    save_master_data(data)
+    master_data = data
+    
+    # Update inventory with new cards
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    # Get existing cards
+    c.execute('SELECT number FROM inventory')
+    existing_cards = {row[0] for row in c.fetchall()}
+    
+    # Add new cards from master data
+    new_cards = [(card['number'], card['type']) for card in data['cards'] 
+                 if card['number'] not in existing_cards]
+    
+    if new_cards:
+        c.executemany('INSERT INTO inventory VALUES (?,?)', new_cards)
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': 'Master data updated successfully'})
 
 @app.route('/api/sales', methods=['GET'])
 def get_sales():
@@ -199,6 +221,537 @@ def export_csv():
         'Content-Disposition': f'attachment; filename=sales_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
     }
 
+MASTER_EDITOR_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Master Data Editor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            min-height: 100vh; 
+            padding: 20px; 
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 20px; 
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+            overflow: hidden; 
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            padding: 30px; 
+            text-align: center; 
+            position: relative; 
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .back-btn { 
+            position: absolute; 
+            left: 20px; 
+            top: 50%; 
+            transform: translateY(-50%); 
+            background: rgba(255,255,255,0.2); 
+            color: white; 
+            padding: 10px 20px; 
+            border-radius: 8px; 
+            text-decoration: none; 
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .back-btn:hover { background: rgba(255,255,255,0.3); }
+        .content { padding: 30px; }
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
+            gap: 30px; 
+        }
+        .section { 
+            background: #f8f9fa; 
+            border-radius: 12px; 
+            padding: 25px; 
+            border: 2px solid #e9ecef;
+        }
+        .section h2 { 
+            color: #333; 
+            margin-bottom: 20px; 
+            display: flex; 
+            align-items: center; 
+            gap: 10px;
+            font-size: 1.3em;
+        }
+        .section-icon { font-size: 1.5em; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { 
+            display: block; 
+            font-weight: 600; 
+            margin-bottom: 5px; 
+            color: #555; 
+            font-size: 0.9em;
+        }
+        .form-group input, .form-group select { 
+            width: 100%; 
+            padding: 10px; 
+            border: 2px solid #e0e0e0; 
+            border-radius: 6px; 
+            font-size: 14px;
+        }
+        .form-group input:focus, .form-group select:focus { 
+            outline: none; 
+            border-color: #667eea; 
+        }
+        .btn { 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 6px; 
+            font-size: 14px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: all 0.3s; 
+            margin-right: 5px;
+        }
+        .btn-primary { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+        }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-warning { background: #ffc107; color: #000; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .item-list { 
+            max-height: 300px; 
+            overflow-y: auto; 
+            border: 1px solid #dee2e6; 
+            border-radius: 6px; 
+            background: white;
+            margin-top: 10px;
+        }
+        .item { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 10px 15px; 
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .item:last-child { border-bottom: none; }
+        .item:hover { background: #f8f9fa; }
+        .item-info { font-weight: 500; color: #333; }
+        .item-sub { font-size: 0.85em; color: #666; }
+        .item-actions { display: flex; gap: 5px; }
+        .btn-small { padding: 5px 10px; font-size: 12px; }
+        .add-form { 
+            display: flex; 
+            gap: 10px; 
+            margin-bottom: 15px; 
+            flex-wrap: wrap;
+        }
+        .add-form input { flex: 1; min-width: 120px; }
+        .save-all-btn { 
+            position: fixed; 
+            bottom: 30px; 
+            right: 30px; 
+            padding: 15px 30px; 
+            font-size: 16px; 
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            z-index: 1000;
+        }
+        .alert { 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-bottom: 20px; 
+            display: none; 
+        }
+        .alert-success { 
+            background: #d4edda; 
+            color: #155724; 
+            border: 1px solid #c3e6cb; 
+            display: block; 
+        }
+        .alert-error { 
+            background: #f8d7da; 
+            color: #721c24; 
+            border: 1px solid #f5c6cb; 
+            display: block; 
+        }
+        .stats { 
+            display: flex; 
+            gap: 20px; 
+            margin-bottom: 20px; 
+            flex-wrap: wrap;
+        }
+        .stat-item { 
+            background: white; 
+            padding: 15px 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-value { 
+            font-size: 1.5em; 
+            font-weight: bold; 
+            color: #667eea; 
+        }
+        .stat-label { 
+            font-size: 0.85em; 
+            color: #666; 
+            text-transform: uppercase;
+        }
+        @media (max-width: 768px) { 
+            .grid { grid-template-columns: 1fr; }
+            .header h1 { font-size: 1.5em; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="/" class="back-btn">← Back to Tracker</a>
+            <h1>⚙️ Master Data Editor</h1>
+            <p>Manage Cards, Machines, Vendors, and Models</p>
+        </div>
+
+        <div class="content">
+            <div class="alert" id="alertBox"></div>
+            
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="statCards">0</div>
+                    <div class="stat-label">Cards</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statMachines">0</div>
+                    <div class="stat-label">Machines</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statVendors">0</div>
+                    <div class="stat-label">Vendors</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statModels">0</div>
+                    <div class="stat-label">Models</div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <!-- Cards Section -->
+                <div class="section">
+                    <h2><span class="section-icon">💳</span> Cards</h2>
+                    <div class="add-form">
+                        <input type="text" id="newCardNumber" placeholder="Card Number">
+                        <select id="newCardType">
+                            <option value="">Select Type</option>
+                        </select>
+                        <button class="btn btn-success" onclick="addCard()">Add</button>
+                    </div>
+                    <div class="item-list" id="cardsList"></div>
+                </div>
+
+                <!-- Machines Section -->
+                <div class="section">
+                    <h2><span class="section-icon">⚙️</span> Machines</h2>
+                    <div class="add-form">
+                        <input type="text" id="newMachine" placeholder="Machine Name">
+                        <button class="btn btn-success" onclick="addMachine()">Add</button>
+                    </div>
+                    <div class="item-list" id="machinesList"></div>
+                </div>
+
+                <!-- Vendors Section -->
+                <div class="section">
+                    <h2><span class="section-icon">🏪</span> Vendors</h2>
+                    <div class="add-form">
+                        <input type="text" id="newVendor" placeholder="Vendor Name">
+                        <button class="btn btn-success" onclick="addVendor()">Add</button>
+                    </div>
+                    <div class="item-list" id="vendorsList"></div>
+                </div>
+
+                <!-- Models Section -->
+                <div class="section">
+                    <h2><span class="section-icon">📱</span> Models</h2>
+                    <div class="add-form">
+                        <input type="text" id="newModel" placeholder="Model Name">
+                        <button class="btn btn-success" onclick="addModel()">Add</button>
+                    </div>
+                    <div class="item-list" id="modelsList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-primary save-all-btn" onclick="saveAllData()">💾 Save All Changes</button>
+
+    <script>
+        let masterData = {
+            cards: [],
+            machines: [],
+            vendors: [],
+            models: []
+        };
+
+        // Card types (fixed list)
+        const cardTypes = ['SBI', 'ICICI', 'HDFC', 'KOTAK', 'AXIS', 'IDFC', 'INDUSIND', 'RBL', 'YES', 'BOB'];
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadMasterData();
+            populateCardTypes();
+        });
+
+        function populateCardTypes() {
+            const select = document.getElementById('newCardType');
+            cardTypes.forEach(type => {
+                const opt = document.createElement('option');
+                opt.value = type;
+                opt.textContent = type;
+                select.appendChild(opt);
+            });
+        }
+
+        async function loadMasterData() {
+            try {
+                const response = await fetch('/api/master-data');
+                const result = await response.json();
+                masterData = result.data;
+                renderAll();
+                updateStats();
+            } catch (error) {
+                showAlert('Failed to load master data: ' + error.message, 'error');
+            }
+        }
+
+        function renderAll() {
+            renderCards();
+            renderMachines();
+            renderVendors();
+            renderModels();
+        }
+
+        function updateStats() {
+            document.getElementById('statCards').textContent = masterData.cards.length;
+            document.getElementById('statMachines').textContent = masterData.machines.length;
+            document.getElementById('statVendors').textContent = masterData.vendors.length;
+            document.getElementById('statModels').textContent = masterData.models.length;
+        }
+
+        function renderCards() {
+            const container = document.getElementById('cardsList');
+            container.innerHTML = '';
+            
+            masterData.cards.forEach((card, index) => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <div>
+                        <div class="item-info">${card.number}</div>
+                        <div class="item-sub">${card.type}</div>
+                    </div>
+                    <div class="item-actions">
+                        <button class="btn btn-danger btn-small" onclick="deleteCard(${index})">Delete</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderMachines() {
+            const container = document.getElementById('machinesList');
+            container.innerHTML = '';
+            
+            masterData.machines.forEach((machine, index) => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <div class="item-info">${machine}</div>
+                    <div class="item-actions">
+                        <button class="btn btn-danger btn-small" onclick="deleteMachine(${index})">Delete</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderVendors() {
+            const container = document.getElementById('vendorsList');
+            container.innerHTML = '';
+            
+            masterData.vendors.forEach((vendor, index) => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <div class="item-info">${vendor}</div>
+                    <div class="item-actions">
+                        <button class="btn btn-danger btn-small" onclick="deleteVendor(${index})">Delete</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function renderModels() {
+            const container = document.getElementById('modelsList');
+            container.innerHTML = '';
+            
+            masterData.models.forEach((model, index) => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <div class="item-info">${model}</div>
+                    <div class="item-actions">
+                        <button class="btn btn-danger btn-small" onclick="deleteModel(${index})">Delete</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function addCard() {
+            const number = document.getElementById('newCardNumber').value.trim();
+            const type = document.getElementById('newCardType').value;
+            
+            if (!number || !type) {
+                showAlert('Please enter both card number and type', 'error');
+                return;
+            }
+            
+            if (masterData.cards.find(c => c.number === number)) {
+                showAlert('Card number already exists', 'error');
+                return;
+            }
+            
+            masterData.cards.push({ number, type });
+            masterData.cards.sort((a, b) => a.number.localeCompare(b.number));
+            
+            document.getElementById('newCardNumber').value = '';
+            document.getElementById('newCardType').value = '';
+            
+            renderCards();
+            updateStats();
+            showAlert('Card added! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function addMachine() {
+            const name = document.getElementById('newMachine').value.trim();
+            if (!name) return;
+            
+            if (masterData.machines.includes(name)) {
+                showAlert('Machine already exists', 'error');
+                return;
+            }
+            
+            masterData.machines.push(name);
+            masterData.machines.sort();
+            
+            document.getElementById('newMachine').value = '';
+            renderMachines();
+            updateStats();
+            showAlert('Machine added! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function addVendor() {
+            const name = document.getElementById('newVendor').value.trim();
+            if (!name) return;
+            
+            if (masterData.vendors.includes(name)) {
+                showAlert('Vendor already exists', 'error');
+                return;
+            }
+            
+            masterData.vendors.push(name);
+            masterData.vendors.sort();
+            
+            document.getElementById('newVendor').value = '';
+            renderVendors();
+            updateStats();
+            showAlert('Vendor added! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function addModel() {
+            const name = document.getElementById('newModel').value.trim();
+            if (!name) return;
+            
+            if (masterData.models.includes(name)) {
+                showAlert('Model already exists', 'error');
+                return;
+            }
+            
+            masterData.models.push(name);
+            masterData.models.sort();
+            
+            document.getElementById('newModel').value = '';
+            renderModels();
+            updateStats();
+            showAlert('Model added! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function deleteCard(index) {
+            if (!confirm('Delete this card?')) return;
+            masterData.cards.splice(index, 1);
+            renderCards();
+            updateStats();
+            showAlert('Card deleted! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function deleteMachine(index) {
+            if (!confirm('Delete this machine?')) return;
+            masterData.machines.splice(index, 1);
+            renderMachines();
+            updateStats();
+            showAlert('Machine deleted! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function deleteVendor(index) {
+            if (!confirm('Delete this vendor?')) return;
+            masterData.vendors.splice(index, 1);
+            renderVendors();
+            updateStats();
+            showAlert('Vendor deleted! Click "Save All Changes" to persist.', 'success');
+        }
+
+        function deleteModel(index) {
+            if (!confirm('Delete this model?')) return;
+            masterData.models.splice(index, 1);
+            renderModels();
+            updateStats();
+            showAlert('Model deleted! Click "Save All Changes" to persist.', 'success');
+        }
+
+        async function saveAllData() {
+            try {
+                const response = await fetch('/api/master-data', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(masterData)
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showAlert('All changes saved successfully! Redirecting...', 'success');
+                    setTimeout(() => window.location.href = '/', 1500);
+                } else {
+                    showAlert('Error saving data: ' + result.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Save failed: ' + error.message, 'error');
+            }
+        }
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alertBox');
+            alert.textContent = message;
+            alert.className = 'alert alert-' + type;
+            setTimeout(() => alert.className = 'alert', 5000);
+        }
+    </script>
+</body>
+</html>
+'''
+
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -213,6 +766,24 @@ HTML_TEMPLATE = '''
         .container { max-width: 1600px; margin: 0 auto; background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; position: relative; }
         .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .master-data-btn { 
+            position: absolute; 
+            right: 20px; 
+            top: 50%; 
+            transform: translateY(-50%); 
+            background: rgba(255,255,255,0.9); 
+            color: #667eea; 
+            padding: 10px 20px; 
+            border-radius: 8px; 
+            text-decoration: none; 
+            font-weight: 600;
+            transition: all 0.3s;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        .master-data-btn:hover { 
+            background: white; 
+            transform: translateY(-50%) scale(1.05); 
+        }
         .tabs { display: flex; background: #f8f9fa; border-bottom: 2px solid #dee2e6; flex-wrap: wrap; }
         .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; transition: all 0.3s; font-weight: 600; color: #666; min-width: 120px; }
         .tab.active { background: white; color: #667eea; border-bottom: 3px solid #667eea; }
@@ -272,7 +843,11 @@ HTML_TEMPLATE = '''
         .close:hover { color: #000; }
         .action-btns { display: flex; gap: 5px; }
         .action-btns .btn { padding: 6px 12px; font-size: 12px; margin: 0; }
-        @media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } .header h1 { font-size: 1.8em; } .export-options { flex-direction: column; } }
+        @media (max-width: 768px) { 
+            .form-grid { grid-template-columns: 1fr; } 
+            .header h1 { font-size: 1.8em; } 
+            .master-data-btn { position: static; transform: none; margin-top: 15px; display: inline-block; }
+        }
     </style>
 </head>
 <body>
@@ -280,6 +855,7 @@ HTML_TEMPLATE = '''
         <div class="header">
             <h1>📱 Mobile Sales Tracker</h1>
             <p>Server: <span id="serverStatus" style="color: #d4edda;">Online</span> | <span id="lastSync">Never synced</span></p>
+            <a href="/master-data-editor" class="master-data-btn">⚙️ Master Data</a>
         </div>
 
         <div class="tabs">
@@ -312,59 +888,33 @@ HTML_TEMPLATE = '''
                         <label>Card Type *</label>
                         <select id="cardType" required>
                             <option value="">Select</option>
-                            <option value="SBI">SBI</option>
-                            <option value="ICICI">ICICI</option>
-                            <option value="HDFC">HDFC</option>
-                            <option value="KOTAK">KOTAK</option>
-                            <option value="AXIS">AXIS</option>
-                            <option value="IDFC">IDFC</option>
-                            <option value="INDUSIND">INDUSIND</option>
-                            <option value="RBL">RBL</option>
-                            <option value="YES">YES</option>
-                            <option value="BOB">BOB</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Machine *</label>
                         <select id="machine" required>
                             <option value="">Select</option>
-                            <option value="PINELAB">PINELAB</option>
-                            <option value="BENOW">BENOW</option>
-                            <option value="PAYTM">PAYTM</option>
-                            <option value="RAZORPAY">RAZORPAY</option>
-                            <option value="INNOVITI">INNOVITI</option>
+                            {% for machine in machines %}
+                            <option value="{{ machine }}">{{ machine }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Vendor *</label>
                         <select id="vendor" required>
                             <option value="">Select</option>
-                            <option value="LIMPTON">LIMPTON</option>
-                            <option value="R G CELLULLARS">R G CELLULLARS</option>
-                            <option value="VELOCITY">VELOCITY</option>
-                            <option value="LETS CONNECT">LETS CONNECT</option>
-                            <option value="THE PRIME">THE PRIME</option>
-                            <option value="LOGICA">LOGICA</option>
-                            <option value="BHAJANLAL">BHAJANLAL</option>
-                            <option value="NATIONAL RADIO PRODUCT">NATIONAL RADIO PRODUCT</option>
-                            <option value="DISHA">DISHA</option>
-                            <option value="D P ELECTRONICS">D P ELECTRONICS</option>
+                            {% for vendor in vendors %}
+                            <option value="{{ vendor }}">{{ vendor }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Model *</label>
                         <select id="model" required>
                             <option value="">Select</option>
-                            <option value="NOTHING">NOTHING</option>
-                            <option value="VIVO">VIVO</option>
-                            <option value="CMF">CMF</option>
-                            <option value="MOTOROLA">MOTOROLA</option>
-                            <option value="OPPO">OPPO</option>
-                            <option value="REDMI">REDMI</option>
-                            <option value="APPLE">APPLE</option>
-                            <option value="SAMSUNG">SAMSUNG</option>
-                            <option value="ONEPLUS">ONEPLUS</option>
-                            <option value="REALME">REALME</option>
+                            {% for model in models %}
+                            <option value="{{ model }}">{{ model }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
@@ -551,59 +1101,33 @@ HTML_TEMPLATE = '''
                         <label>Card Type *</label>
                         <select id="editCardType" required>
                             <option value="">Select</option>
-                            <option value="SBI">SBI</option>
-                            <option value="ICICI">ICICI</option>
-                            <option value="HDFC">HDFC</option>
-                            <option value="KOTAK">KOTAK</option>
-                            <option value="AXIS">AXIS</option>
-                            <option value="IDFC">IDFC</option>
-                            <option value="INDUSIND">INDUSIND</option>
-                            <option value="RBL">RBL</option>
-                            <option value="YES">YES</option>
-                            <option value="BOB">BOB</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Machine *</label>
                         <select id="editMachine" required>
                             <option value="">Select</option>
-                            <option value="PINELAB">PINELAB</option>
-                            <option value="BENOW">BENOW</option>
-                            <option value="PAYTM">PAYTM</option>
-                            <option value="RAZORPAY">RAZORPAY</option>
-                            <option value="INNOVITI">INNOVITI</option>
+                            {% for machine in machines %}
+                            <option value="{{ machine }}">{{ machine }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Vendor *</label>
                         <select id="editVendor" required>
                             <option value="">Select</option>
-                            <option value="LIMPTON">LIMPTON</option>
-                            <option value="R G CELLULLARS">R G CELLULLARS</option>
-                            <option value="VELOCITY">VELOCITY</option>
-                            <option value="LETS CONNECT">LETS CONNECT</option>
-                            <option value="THE PRIME">THE PRIME</option>
-                            <option value="LOGICA">LOGICA</option>
-                            <option value="BHAJANLAL">BHAJANLAL</option>
-                            <option value="NATIONAL RADIO PRODUCT">NATIONAL RADIO PRODUCT</option>
-                            <option value="DISHA">DISHA</option>
-                            <option value="D P ELECTRONICS">D P ELECTRONICS</option>
+                            {% for vendor in vendors %}
+                            <option value="{{ vendor }}">{{ vendor }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Model *</label>
                         <select id="editModel" required>
                             <option value="">Select</option>
-                            <option value="NOTHING">NOTHING</option>
-                            <option value="VIVO">VIVO</option>
-                            <option value="CMF">CMF</option>
-                            <option value="MOTOROLA">MOTOROLA</option>
-                            <option value="OPPO">OPPO</option>
-                            <option value="REDMI">REDMI</option>
-                            <option value="APPLE">APPLE</option>
-                            <option value="SAMSUNG">SAMSUNG</option>
-                            <option value="ONEPLUS">ONEPLUS</option>
-                            <option value="REALME">REALME</option>
+                            {% for model in models %}
+                            <option value="{{ model }}">{{ model }}</option>
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
@@ -629,19 +1153,43 @@ HTML_TEMPLATE = '''
         let salesData = [];
         let inventoryData = [];
         let comparisonData = [];
+        let masterData = {};
 
         document.addEventListener('DOMContentLoaded', function() {
             setCurrentDateTime();
             setInterval(setCurrentDateTime, 60000);
+            loadMasterData();
             syncData();
             
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('endDate').value = today;
             
-            // Set current month as default for month filters
             const currentMonth = new Date().toISOString().slice(0, 7);
             document.getElementById('exportMonth').value = currentMonth;
         });
+
+        async function loadMasterData() {
+            try {
+                const response = await fetch('/api/master-data');
+                const result = await response.json();
+                masterData = result.data;
+                populateCardTypeDropdown();
+            } catch (error) {
+                console.error('Failed to load master data:', error);
+            }
+        }
+
+        function populateCardTypeDropdown() {
+            const cardTypeSelect = document.getElementById('cardType');
+            const editCardTypeSelect = document.getElementById('editCardType');
+            
+            const cardTypes = [...new Set(masterData.cards.map(c => c.type))].sort();
+            
+            const options = cardTypes.map(type => `<option value="${type}">${type}</option>`).join('');
+            
+            cardTypeSelect.innerHTML = '<option value="">Select</option>' + options;
+            editCardTypeSelect.innerHTML = '<option value="">Select</option>' + options;
+        }
 
         function setCurrentDateTime() {
             const now = new Date();
@@ -724,7 +1272,6 @@ HTML_TEMPLATE = '''
             
             try {
                 if (editId) {
-                    // Update existing
                     await fetch(`/api/sales/${editId}`, {
                         method: 'PUT',
                         headers: {'Content-Type': 'application/json'},
@@ -734,7 +1281,6 @@ HTML_TEMPLATE = '''
                     if (idx !== -1) salesData[idx] = record;
                     showAlert('Record updated!', 'success');
                 } else {
-                    // Add new
                     await fetch('/api/sales', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -755,6 +1301,7 @@ HTML_TEMPLATE = '''
             document.getElementById('submitBtn').textContent = 'Submit Sale';
             setCurrentDateTime();
             document.getElementById('cardValidationBadge').style.display = 'none';
+            populateCardTypeDropdown();
         }
 
         function showAlert(message, type) {
@@ -1039,7 +1586,6 @@ HTML_TEMPLATE = '''
             const remainingStats = document.getElementById('remainingStats');
             let filtered = [...comparisonData];
             
-            // Apply month filter
             if (monthFilter) {
                 filtered = filtered.filter(item => {
                     if (item.dateTime === '-') return false;
@@ -1175,7 +1721,6 @@ HTML_TEMPLATE = '''
             XLSX.writeFile(wb, `sales_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
         
-        // Close modal when clicking outside
         window.onclick = function(event) {
             const modal = document.getElementById('editModal');
             if (event.target == modal) {
